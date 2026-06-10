@@ -659,199 +659,159 @@
 </div>
 
 <script>
-  // ── GOOGLE DRIVE CONFIGURATION ──
+  // ==========================================
+  // 1. KONFIGURASI (WAJIB DIISI)
+  // ==========================================
   const CONFIG = {
-    API_KEY: 'AIzaSyBN1r7HO2-LuO8bXW_qCvHGtg7rv90YmvM', // Ganti dengan API Key Anda
-    FOLDER_ID: '1ClDkylC4qbQu0EmsEUmRMCoXJ1RS5stA', // Ganti dengan Folder ID root Google Drive Anda
-    MIME_TYPE: {
-      FOLDER: 'application/vnd.google-apps.folder',
-      IMAGE: 'image/jpeg,image/png,image/gif,image/webp'
-    }
+    // Ganti dengan URL Web App Apps Script Anda (yang berakhiran /exec)
+    PROXY_URL: 'https://script.google.com/macros/s/AKfycbyHxBev3KsH-TPGt8HSfq4QjVa1zPydU16k0WVyY0rILfnlhFt5IjBKv-IFmCAzGnmWQA/exec',
+    
+    // Ganti dengan ID Folder Utama Google Drive Anda
+    ROOT_FOLDER_ID: '1ClDkylC4qbQu0EmsEUmRMCoXJ1RS5stA' 
   };
 
-  // Global state
-  let allFolders = {}; 
+  // State global
   let currentImages = [];
-  let currentYear = null;
-  let currentMonth = null;
+  let currentYearName = '';
+  let currentMonthName = '';
 
-  // ── HAMBURGER MENU ──
-  const hamburgerBtn = document.getElementById('hamburgerBtn');
-  const sidebar = document.getElementById('sidebar');
-  const sidebarOverlay = document.getElementById('sidebarOverlay');
-
-  function toggleSidebar() {
-    hamburgerBtn.classList.toggle('active');
-    sidebar.classList.toggle('active');
-    sidebarOverlay.classList.toggle('active');
-  }
-
-  function closeSidebar() {
-    hamburgerBtn.classList.remove('active');
-    sidebar.classList.remove('active');
-    sidebarOverlay.classList.remove('active');
-  }
-
-  hamburgerBtn.addEventListener('click', toggleSidebar);
-  sidebarOverlay.addEventListener('click', closeSidebar);
-
-  // ── GOOGLE DRIVE API FUNCTIONS ──
-  async function fetchFolders() {
-    try {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${CONFIG.FOLDER_ID}'+in+parents+and+mimeType='${CONFIG.MIME_TYPE.FOLDER}'&key=${CONFIG.API_KEY}&orderBy=name+desc`
-      );
-      if (!response.ok) throw new Error('Failed to fetch folders');
-      const data = await response.json();
-      return data.files || [];
-    } catch (error) {
-      console.error('Error fetching folders:', error);
-      throw error;
-    }
-  }
-
-  async function fetchMonthFolders(yearFolderId) {
-    try {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${yearFolderId}'+in+parents+and+mimeType='${CONFIG.MIME_TYPE.FOLDER}'&key=${CONFIG.API_KEY}&orderBy=name+desc`
-      );
-      if (!response.ok) throw new Error('Failed to fetch month folders');
-      const data = await response.json();
-      return data.files || [];
-    } catch (error) {
-      console.error('Error fetching month folders:', error);
-      throw error;
-    }
-  }
-
-  async function fetchImages(folderId) {
-    try {
-      const mimeTypeQuery = CONFIG.MIME_TYPE.IMAGE.split(',').map(mime => `mimeType='${mime}'`).join('+or+');
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+(${mimeTypeQuery})&key=${CONFIG.API_KEY}&orderBy=name+desc&fields=files(id,name,mimeType,thumbnailLink)`
-      );
-      if (!response.ok) throw new Error('Failed to fetch images');
-      const data = await response.json();
-      return data.files || [];
-    } catch (error) {
-      console.error('Error fetching images:', error);
-      throw error;
-    }
-  }
-
-  // ── BUILD SIDEBAR NAVIGATION ──
-  async function buildSidebarNav() {
-    const sidebarNav = document.getElementById('sidebarNav');
+  // ==========================================
+  // 2. FUNGSI FETCH KE PROXY
+  // ==========================================
+  async function fetchFromProxy(type, folderId) {
+    const url = `${CONFIG.PROXY_URL}?type=${type}&folderId=${folderId}`;
+    console.log(`Fetching ${type} from:`, url);
     
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Gagal terhubung ke server (Status: ${response.status})`);
+    
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    
+    return data.files || [];
+  }
+
+  // ==========================================
+  // 3. FUNGSI RENDER & LOGIKA UTAMA
+  // ==========================================
+  async function initGallery() {
+    const sidebarNav = document.getElementById('sidebarNav');
+    sidebarNav.innerHTML = '<li class="loading"><div class="spinner"></div></li>';
+
     try {
-      const yearFolders = await fetchFolders();
-      if (yearFolders.length === 0) {
-        sidebarNav.innerHTML = '<li style="padding: 20px; color: var(--text-secondary);">Tidak ada folder ditemukan</li>';
+      // A. Ambil Daftar Tahun
+      const years = await fetchFromProxy('years', CONFIG.ROOT_FOLDER_ID);
+      
+      if (years.length === 0) {
+        sidebarNav.innerHTML = '<li style="padding:20px;">Tidak ada folder tahun ditemukan.</li>';
         return;
       }
 
-      for (const yearFolder of yearFolders) {
-        const year = yearFolder.name;
-        allFolders[year] = {};
-        const monthFolders = await fetchMonthFolders(yearFolder.id);
-        monthFolders.forEach(monthFolder => {
-          allFolders[year][monthFolder.name] = monthFolder.id;
-        });
-      }
-
-      const sortedYears = Object.keys(allFolders).sort().reverse();
-      let html = '';
-      
-      sortedYears.forEach((year, index) => {
-        const months = Object.keys(allFolders[year]).sort().reverse();
+      // B. Render Sidebar Tahun
+      let sidebarHTML = '';
+      years.forEach((year, index) => {
         const isFirst = index === 0 ? 'active expanded' : '';
         const isOpen = index === 0 ? 'open' : '';
         
-        html += `
-          <li class="parent-item ${isFirst}" data-year="${year}" onclick="toggleYearFolder('${year}')">
+        sidebarHTML += `
+          <li class="parent-item ${isFirst}" data-year-id="${year.id}" data-year-name="${year.name}" onclick="handleYearClick('${year.id}', '${year.name}', this)">
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
-            ${year}
+            ${year.name}
             <svg class="chevron" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6"/>
             </svg>
           </li>
-          <ul class="submenu ${isOpen}" id="submenu-${year}">
-            ${months.map((month, mIndex) => `
-              <li class="${index === 0 && mIndex === 0 ? 'active' : ''}" 
-                  data-year="${year}" 
-                  data-month="${month}" 
-                  onclick="selectMonth('${year}', '${month}', this)">
-                ${month}
-              </li>
-            `).join('')}
+          <ul class="submenu ${isOpen}" id="submenu-${year.name}">
+            <li class="loading" style="padding: 10px 20px;"><div class="spinner" style="width:20px;height:20px;border-width:2px;"></div></li>
           </ul>
         `;
       });
+      sidebarNav.innerHTML = sidebarHTML;
 
-      sidebarNav.innerHTML = html;
-
-      if (sortedYears.length > 0) {
-        const latestYear = sortedYears[0];
-        const latestMonth = Object.keys(allFolders[latestYear]).sort().reverse()[0];
-        if (latestMonth) {
-          await loadFolder(latestYear, latestMonth);
-        }
-      }
+      // C. Auto-load bulan pertama dari tahun pertama
+      const firstYear = years[0];
+      await handleYearClick(firstYear.id, firstYear.name, document.querySelector(`[data-year-name="${firstYear.name}"]`), true);
 
     } catch (error) {
-      sidebarNav.innerHTML = `<li class="error-message">Gagal memuat folder. Periksa API Key & Folder ID.</li>`;
+      console.error("Init Error:", error);
+      document.getElementById('sidebarNav').innerHTML = `<li class="error-message" style="padding:20px; color:red;">${error.message}</li>`;
     }
   }
 
-  function toggleYearFolder(year) {
-    const submenu = document.getElementById(`submenu-${year}`);
-    const parentItem = document.querySelector(`[data-year="${year}"].parent-item`);
-    submenu.classList.toggle('open');
-    parentItem.classList.toggle('expanded');
-  }
-
-  async function selectMonth(year, month, element) {
-    document.querySelectorAll('.sidebar-nav li').forEach(li => li.classList.remove('active'));
-    element.classList.add('active');
-    await loadFolder(year, month);
-    if (window.innerWidth <= 768) closeSidebar();
-  }
-
-  // ── LOAD FOLDER & FIX LIGHTBOX URL ──
-async function loadFolder(year, month) {
-    currentYear = year;
-    currentMonth = month;
-    const folderId = allFolders[year][month];
-    
-    document.getElementById('currentFolder').textContent = `${year} / ${month}`;
-    document.getElementById('gallery').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-    
-    try {
-      const images = await fetchImages(folderId);
-      currentImages = images;
+  async function handleYearClick(yearId, yearName, element, isAutoLoad = false) {
+    if (!isAutoLoad) {
+      // Toggle UI
+      const submenu = document.getElementById(`submenu-${yearName}`);
+      const isOpen = submenu.classList.contains('open');
       
+      // Tutup semua submenu lain
+      document.querySelectorAll('.submenu').forEach(el => el.classList.remove('open'));
+      document.querySelectorAll('.parent-item').forEach(el => el.classList.remove('active', 'expanded'));
+
+      if (!isOpen) {
+        submenu.classList.add('open');
+        element.classList.add('active', 'expanded');
+      } else {
+        return; // Jika sudah terbuka, jangan lakukan apa-apa
+      }
+    }
+
+    // Jika submenu kosong (belum di-load), ambil datanya
+    const submenu = document.getElementById(`submenu-${yearName}`);
+    if (submenu.querySelector('.loading')) {
+      try {
+        const months = await fetchFromProxy('months', yearId);
+        
+        let monthsHTML = '';
+        months.forEach((month, index) => {
+          const isActive = (index === 0 && !currentMonthName) ? 'active' : '';
+          monthsHTML += `<li class="${isActive}" onclick="handleMonthClick('${yearName}', '${month.name}', '${month.id}', this)">${month.name}</li>`;
+        });
+        submenu.innerHTML = monthsHTML;
+
+        // Auto-load bulan pertama jika ini auto-load tahun pertama
+        if (isAutoLoad && months.length > 0) {
+          await handleMonthClick(yearName, months[0].name, months[0].id, submenu.querySelector('li'));
+        }
+      } catch (error) {
+        submenu.innerHTML = `<li style="padding:10px 20px; color:red;">Gagal memuat bulan</li>`;
+      }
+    }
+  }
+
+  async function handleMonthClick(yearName, monthName, monthId, element) {
+    // Update UI Active State
+    document.querySelectorAll('.submenu li').forEach(li => li.classList.remove('active'));
+    if (element) element.classList.add('active');
+
+    currentYearName = yearName;
+    currentMonthName = monthName;
+    document.getElementById('currentFolder').textContent = `${yearName} / ${monthName}`;
+    
+    // Tampilkan loading di gallery
+    const gallery = document.getElementById('gallery');
+    gallery.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    try {
+      const images = await fetchFromProxy('images', monthId);
+      currentImages = images;
+
       if (images.length === 0) {
-        document.getElementById('gallery').innerHTML = '<div class="loading">Tidak ada foto di folder ini</div>';
+        gallery.innerHTML = '<div class="loading">Tidak ada foto di folder ini.</div>';
         return;
       }
 
-      let html = '';
+      // Render Gallery
+      let galleryHTML = '';
       images.forEach((img, index) => {
-        // THUMBNAIL untuk gallery (ukuran sedang)
+        // URL Thumbnail untuk Grid (w600)
         const thumbUrl = `https://drive.google.com/thumbnail?id=${img.id}&sz=w600`;
         
-        // Simpan ID untuk lightbox
-        const imageId = img.id;
-        
-        html += `
+        galleryHTML += `
           <div class="gallery-item" onclick="openLightbox(${index})">
-            <img 
-              src="${thumbUrl}" 
-              alt="${img.name}"
-              referrerpolicy="no-referrer"
-            />
+            <img src="${thumbUrl}" alt="${img.name}" referrerpolicy="no-referrer" loading="lazy" />
             <div class="eye-overlay">
               <div class="eye-icon">
                 <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2">
@@ -863,54 +823,47 @@ async function loadFolder(year, month) {
           </div>
         `;
       });
-      
-      document.getElementById('gallery').innerHTML = html;
-      
+      gallery.innerHTML = galleryHTML;
+
     } catch (error) {
-      console.error('Error loading folder:', error);
-      document.getElementById('gallery').innerHTML = `<div class="error-message">Gagal memuat gambar.</div>`;
+      console.error("Load Images Error:", error);
+      gallery.innerHTML = `<div class="error-message">Gagal memuat gambar: ${error.message}</div>`;
     }
   }
 
-  // ── LIGHTBOX FUNCTIONALITY (DIPERBAIKI) ──
+  // ==========================================
+  // 4. FUNGSI LIGHTBOX
+  // ==========================================
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = document.getElementById('lightboxImg');
-  const lightboxClose = document.getElementById('lightboxClose');
-  const lightboxPrev = document.getElementById('lightboxPrev');
-  const lightboxNext = document.getElementById('lightboxNext');
   const lightboxCounter = document.getElementById('lightboxCounter');
-  
   let currentIndex = 0;
 
-  // Fungsi ini dipanggil langsung dari onclick di HTML yang di-generate
   function openLightbox(index) {
-    console.log("Membuka lightbox index:", index, "Total gambar:", currentImages.length);
     currentIndex = index;
     updateLightboxImage();
     lightbox.classList.add('active');
-    document.body.style.overflow = 'hidden'; // Mencegah scroll background
+    document.body.style.overflow = 'hidden'; // Kunci scroll background
   }
 
   function closeLightbox() {
     lightbox.classList.remove('active');
-    document.body.style.overflow = ''; // Mengembalikan scroll
+    document.body.style.overflow = ''; // Buka kunci scroll
   }
 
   function updateLightboxImage() {
     const img = currentImages[currentIndex];
-    
-    // LIGHTBOX: Gunakan ukuran maksimal (w1600 atau w2000)
+    // URL Full Size untuk Lightbox (w1600)
     const fullUrl = `https://drive.google.com/thumbnail?id=${img.id}&sz=w1600`;
     
-    console.log("Loading lightbox image:", fullUrl);
     lightboxImg.src = fullUrl;
     lightboxImg.alt = img.name;
-    lightboxImg.setAttribute('referrerpolicy', 'no-referrer');
+    lightboxImg.setAttribute('referrerpolicy', 'no-referrer'); // WAJIB agar gambar muncul
     lightboxCounter.textContent = `${currentIndex + 1} / ${currentImages.length}`;
   }
 
   function nextImage(e) {
-    if(e) e.stopPropagation(); // Mencegah event bubbling
+    if(e) e.stopPropagation();
     currentIndex = (currentIndex + 1) % currentImages.length;
     updateLightboxImage();
   }
@@ -921,23 +874,15 @@ async function loadFolder(year, month) {
     updateLightboxImage();
   }
 
-  // Event Listeners
-  lightboxClose.addEventListener('click', (e) => {
-    e.stopPropagation();
-    closeLightbox();
-  });
+  // Event Listeners Lightbox
+  document.getElementById('lightboxClose').addEventListener('click', (e) => { e.stopPropagation(); closeLightbox(); });
+  document.getElementById('lightboxNext').addEventListener('click', nextImage);
+  document.getElementById('lightboxPrev').addEventListener('click', prevImage);
   
-  lightboxNext.addEventListener('click', nextImage);
-  lightboxPrev.addEventListener('click', prevImage);
-
-  // Tutup saat klik area gelap (backdrop)
   lightbox.addEventListener('click', (e) => {
-    if (e.target === lightbox || e.target.classList.contains('lightbox-content')) {
-      closeLightbox();
-    }
+    if (e.target === lightbox || e.target.classList.contains('lightbox-content')) closeLightbox();
   });
 
-  // Navigasi Keyboard
   document.addEventListener('keydown', (e) => {
     if (!lightbox.classList.contains('active')) return;
     if (e.key === 'Escape') closeLightbox();
@@ -945,10 +890,28 @@ async function loadFolder(year, month) {
     else if (e.key === 'ArrowLeft') prevImage();
   });
 
-  // ── INITIALIZE ──
-  document.addEventListener('DOMContentLoaded', () => {
-    buildSidebarNav();
-  });
+  // ==========================================
+  // 5. INISIALISASI
+  // ==========================================
+  window.addEventListener('DOMContentLoaded', initGallery);
+
+  // Hamburger Menu Logic (Tetap sama seperti sebelumnya)
+  const hamburgerBtn = document.getElementById('hamburgerBtn');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+  function toggleSidebar() {
+    hamburgerBtn.classList.toggle('active');
+    sidebar.classList.toggle('active');
+    sidebarOverlay.classList.toggle('active');
+  }
+  function closeSidebar() {
+    hamburgerBtn.classList.remove('active');
+    sidebar.classList.remove('active');
+    sidebarOverlay.classList.remove('active');
+  }
+  hamburgerBtn.addEventListener('click', toggleSidebar);
+  sidebarOverlay.addEventListener('click', closeSidebar);
 </script>
 </body>
 </html>
